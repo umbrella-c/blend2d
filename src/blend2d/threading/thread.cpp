@@ -46,6 +46,8 @@ class BLInternalThread : public BLThread {
 public:
 #ifdef _WIN32
   intptr_t handle;
+#elif defined(MOLLENOS)
+  thrd_t handle;
 #else
   pthread_t handle;
 #endif
@@ -248,7 +250,34 @@ BLResult BL_CDECL blThreadCreate(BLThread** threadOut, const BLThreadAttributes*
 // [BLThread - Posix]
 // ============================================================================
 
-#ifndef _WIN32
+#if defined(MOLLENOS)
+static int blThreadEntryPointWrapper(void* arg) noexcept {
+  blThreadEntryPoint(static_cast<BLInternalThread*>(arg));
+  return 0;
+}
+
+BLResult BL_CDECL blThreadCreate(BLThread** threadOut, const BLThreadAttributes* attributes, BLThreadFunc exitFunc, void* exitData) noexcept {
+  blUnused(attributes);
+
+  BLInternalThread* thread = blThreadNew(exitFunc, exitData);
+  if (BL_UNLIKELY(!thread)) {
+    return blTraceError(BL_ERROR_OUT_OF_MEMORY);
+  }
+  
+  int err = thrd_create(&thread->handle, blThreadEntryPointWrapper, thread);
+  if (err)
+    return blResultFromPosixError(err);
+  thrd_detach(thread->handle);
+  *threadOut = thread;
+  return BL_SUCCESS;
+}
+#endif
+
+// ============================================================================
+// [BLThread - Posix]
+// ============================================================================
+
+#if !defined(_WIN32) && !defined(MOLLENOS)
 static std::atomic<size_t> blThreadMinimumProbedStackSize;
 
 static void* blThreadEntryPointWrapper(void* arg) noexcept {

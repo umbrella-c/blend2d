@@ -266,7 +266,7 @@ endif()
 # [Blend2D - Linker Support]
 # =============================================================================
 
-if (WIN32)
+if (WIN32 OR MOLLENOS)
   if(CMAKE_LINKER MATCHES "link\\.exe" OR CMAKE_LINKER MATCHES "lld-link\\.exe")
     set(BLEND2D_LINKER_SUPPORTS_NATVIS TRUE)
   endif()
@@ -358,7 +358,7 @@ endif()
 # [Blend2D - Dependencies]
 # =============================================================================
 
-if (NOT WIN32)
+if (NOT WIN32 AND NOT MOLLENOS)
   if (HAIKU)
     list(APPEND BLEND2D_DEPS root m pthread)
   else()

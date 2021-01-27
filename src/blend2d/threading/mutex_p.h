@@ -104,6 +104,15 @@ public:
   BL_INLINE void lock() noexcept { AcquireSRWLockExclusive(&handle); }
   BL_INLINE bool tryLock() noexcept { return TryAcquireSRWLockExclusive(&handle) != 0; }
   BL_INLINE void unlock() noexcept { ReleaseSRWLockExclusive(&handle); }
+#elif defined(MOLLENOS)
+  mtx_t handle;
+
+  BL_INLINE BLMutex() noexcept { mtx_init(&handle, mtx_plain); }
+  BL_INLINE ~BLMutex() noexcept { mtx_destroy(&handle); }
+
+  BL_INLINE void lock() noexcept { mtx_lock(&handle); }
+  BL_INLINE bool tryLock() noexcept { return mtx_trylock(&handle) == 0; }
+  BL_INLINE void unlock() noexcept { mtx_unlock(&handle); }
 #else
   pthread_mutex_t handle;
 
@@ -150,6 +159,59 @@ public:
   BL_INLINE void lockShared() noexcept { AcquireSRWLockShared(&handle); }
   BL_INLINE void tryLockShared() noexcept { TryAcquireSRWLockShared(&handle); }
   BL_INLINE void unlockShared() noexcept { ReleaseSRWLockShared(&handle); }
+#elif defined(MOLLENOS)
+  mtx_t sync_object;
+  int   readers;
+  cnd_t signal;
+
+  BL_INLINE BLSharedMutex() noexcept { mtx_init(&sync_object, mtx_plain); cnd_init(&signal); readers = 0; }
+  BL_INLINE ~BLSharedMutex() noexcept { cnd_destroy(&signal); mtx_destroy(&sync_object); }
+
+  BL_INLINE void lock() noexcept {
+    mtx_lock(&sync_object);
+    if (readers) {
+      cnd_wait(&signal, &sync_object);
+    }
+  }
+
+  BL_INLINE bool tryLock() noexcept {
+    if (mtx_lock(&sync_object) == thrd_success) {
+      if (readers) {
+        cnd_wait(&signal, &sync_object);
+      }
+      return true;
+    }
+    return false;
+  }
+  
+  BL_INLINE void unlock() noexcept {
+    mtx_unlock(&sync_object);
+    cnd_signal(&signal);
+  }
+
+  BL_INLINE void lockShared() noexcept {
+    mtx_lock(&sync_object);
+    readers++;
+    mtx_unlock(&sync_object);
+  }
+
+  BL_INLINE bool tryLockShared() noexcept {
+    if (mtx_trylock(&sync_object) == thrd_success) {
+      readers++;
+      mtx_unlock(&sync_object);
+      return true;
+    }
+    return false;
+  }
+  
+  BL_INLINE void unlockShared() noexcept { 
+    mtx_lock(&sync_object);
+    readers--;
+    if (!readers) {
+        cnd_signal(&signal);
+    }
+    mtx_unlock(&sync_object);
+  }  
 #else
   pthread_rwlock_t handle;
 

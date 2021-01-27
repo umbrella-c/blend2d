@@ -27,7 +27,7 @@
 #include "../api-internal_p.h"
 #include "../threading/mutex_p.h"
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(MOLLENOS)
   #include <sys/time.h>
 #endif
 
@@ -35,13 +35,25 @@
 //! \addtogroup blend2d_internal
 //! \{
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(MOLLENOS)
 static void blGetAbsTimeForWaitCondition(struct timespec& out, uint64_t microseconds) noexcept {
   struct timeval now;
   gettimeofday(&now, nullptr);
 
   out.tv_sec = now.tv_sec + int64_t(microseconds / 1000000u);
   out.tv_nsec = (now.tv_usec + int64_t(microseconds % 1000000u)) * 1000;
+  out.tv_sec += out.tv_nsec / 1000000000;
+  out.tv_nsec %= 1000000000;
+}
+#endif
+
+#ifdef MOLLENOS
+static void blGetAbsTimeForWaitCondition(struct timespec& out, uint64_t microseconds) noexcept {
+  struct timespec now;
+  timespec_get(&now, TIME_UTC);
+
+  out.tv_sec = now.tv_sec + int64_t(microseconds / 1000000u);
+  out.tv_nsec = int64_t(microseconds % 1000000u) * 1000;
   out.tv_sec += out.tv_nsec / 1000000000;
   out.tv_nsec %= 1000000000;
 }
@@ -74,6 +86,43 @@ public:
     BOOL ret = SleepConditionVariableSRW(&handle, &mutex.handle, milliseconds, 0);
 
     if (ret)
+      return BL_SUCCESS;
+
+    // We don't trace `BL_ERROR_TIMED_OUT` as it's not unexpected.
+    return BL_ERROR_TIMED_OUT;
+  }
+#elif defined(MOLLENOS)
+  cnd_t handle;
+
+  BL_INLINE BLConditionVariable() noexcept { cnd_init(&handle); }
+  BL_INLINE ~BLConditionVariable() noexcept { cnd_destroy(&handle); }
+
+  BL_INLINE void signal() noexcept {
+    int ret = cnd_signal(&handle);
+    BL_ASSERT(ret == 0);
+    blUnused(ret);
+  }
+
+  BL_INLINE void broadcast() noexcept {
+    int ret = cnd_broadcast(&handle);
+    BL_ASSERT(ret == 0);
+    blUnused(ret);
+  }
+
+  BL_INLINE BLResult wait(BLMutex& mutex) noexcept {
+    int ret = cnd_wait(&handle, &mutex.handle);
+    return ret == 0 ? BL_SUCCESS : blTraceError(BL_ERROR_INVALID_STATE);
+  }
+
+  BL_INLINE BLResult waitFor(BLMutex& mutex, uint64_t microseconds) noexcept {
+    struct timespec absTime;
+    blGetAbsTimeForWaitCondition(absTime, microseconds);
+    return waitUntil(mutex, &absTime);
+  }
+
+  BL_INLINE BLResult waitUntil(BLMutex& mutex, const struct timespec* absTime) noexcept {
+    int ret = cnd_timedwait(&handle, &mutex.handle, absTime);
+    if (ret == 0)
       return BL_SUCCESS;
 
     // We don't trace `BL_ERROR_TIMED_OUT` as it's not unexpected.

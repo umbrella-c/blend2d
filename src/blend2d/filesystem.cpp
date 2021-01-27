@@ -29,13 +29,18 @@
 #include "./unicode_p.h"
 #include "./threading/atomic_p.h"
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(MOLLENOS)
   #include <errno.h>
   #include <fcntl.h>
   #include <unistd.h>
   #include <sys/mman.h>
   #include <sys/stat.h>
   #include <sys/types.h>
+#endif
+
+#ifdef MOLLENOS
+#include <io.h>
+#define ftruncate chsize
 #endif
 
 // ============================================================================
@@ -407,7 +412,8 @@ BLResult blFileGetSize(BLFileCore* self, uint64_t* fileSizeOut) noexcept {
     defined(__DragonFly__) || \
     defined(__FreeBSD__  ) || \
     defined(__NetBSD__   ) || \
-    defined(__OpenBSD__  )
+    defined(__OpenBSD__  ) || \
+    defined(MOLLENOS)
   #define BL_FILE64_API(NAME) NAME
 #else
   #define BL_FILE64_API(NAME) NAME##64
@@ -435,9 +441,13 @@ BLResult blFileOpen(BLFileCore* self, const char* fileName, uint32_t openFlags) 
   if (openFlags & BL_FILE_OPEN_CREATE_EXCLUSIVE) of |= O_CREAT | O_EXCL;
   if (openFlags & BL_FILE_OPEN_TRUNCATE        ) of |= O_TRUNC;
 
+#ifndef MOLLENOS
   mode_t om = S_IRUSR | S_IWUSR |
               S_IRGRP | S_IWGRP |
               S_IROTH | S_IWOTH ;
+#else
+  int om = 0;
+#endif
 
   // NOTE: Do not close the file before calling `open()`. We should
   // behave atomically, which means that we won't close the existing
@@ -587,12 +597,20 @@ BLResult blFileGetSize(BLFileCore* self, uint64_t* fileSizeOut) noexcept {
     return blTraceError(BL_ERROR_INVALID_HANDLE);
 
   int fd = int(self->handle);
-  struct stat s;
 
+#ifndef MOLLENOS
+  struct stat s;
   if (fstat(fd, &s) != 0)
     return blTraceError(blResultFromPosixError(errno));
-
   *fileSizeOut = uint64_t(s.st_size);
+#else
+  OsFileDescriptor_t descriptor;
+  OsStatus_t status = GetFileInformationFromFd(fd, &descriptor);
+  if (status != OsSuccess) {
+    return blTraceError(blResultFromPosixError(OsStatusToErrno(status)));
+  }
+  *fileSizeOut = descriptor.Size.QuadPart;
+#endif
   return BL_SUCCESS;
 }
 
@@ -661,6 +679,23 @@ BLResult BLFileMapping::unmap() noexcept {
   return result;
 }
 
+#elif defined(MOLLENOS)
+BLResult BLFileMapping::map(BLFile& file, size_t size, uint32_t flags) noexcept {
+  blUnused(size);
+  blUnused(flags);
+
+  if (!file.isOpen())
+    return blTraceError(BL_ERROR_INVALID_VALUE);
+
+  return BL_ERROR_NO_DEVICE;
+}
+
+BLResult BLFileMapping::unmap() noexcept {
+  if (empty())
+    return BL_SUCCESS;
+  
+  return BL_ERROR_NO_DEVICE;
+}
 #else
 
 BLResult BLFileMapping::map(BLFile& file, size_t size, uint32_t flags) noexcept {

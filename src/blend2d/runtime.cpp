@@ -171,6 +171,11 @@ static BL_INLINE void blRuntimeInitSystemInfo(BLRuntimeContext* rt) noexcept {
   GetSystemInfo(&si);
   info.threadStackSize = si.dwAllocationGranularity;
   info.allocationGranularity = si.dwAllocationGranularity;
+#elif defined(MOLLENOS)
+  SystemDescriptor_t descriptor;
+  SystemQuery(&descriptor);
+  info.threadStackSize = (uint32_t)descriptor.AllocationGranularityBytes;
+  info.allocationGranularity = (uint32_t)descriptor.AllocationGranularityBytes;
 #else
   #if defined(_SC_PAGESIZE)
   info.allocationGranularity = uint32_t(sysconf(_SC_PAGESIZE));
